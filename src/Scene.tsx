@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { cameraPose, journeyState, planets, type Planet } from './journey';
+import { cameraPose, clamp, journeyState, planets, type Planet } from './journey';
 import { glowTexture } from './textures';
 
 interface SceneProps {
@@ -214,38 +214,118 @@ function Star({ reducedMotion }: Pick<SceneProps, 'reducedMotion'>) {
   );
 }
 
-function Starfield() {
-  const positions = useMemo(() => {
-    const data = new Float32Array(1800 * 3);
+const starfieldVertex = `
+  uniform float uTime;
+  uniform float uPixelRatio;
+  attribute float aSize;
+  attribute float aAlpha;
+  attribute float aPhase;
+  attribute vec3 aTint;
+  varying vec3 vTint;
+  varying float vAlpha;
+  void main() {
+    vTint = aTint;
+    vAlpha = aAlpha * (0.82 + 0.18 * sin(uTime * (0.6 + aPhase * 1.7) + aPhase * 6.2831));
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = aSize * uPixelRatio * (400.0 / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+const starfieldFragment = `
+  varying vec3 vTint;
+  varying float vAlpha;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    float glow = smoothstep(0.5, 0.0, d);
+    float core = smoothstep(0.16, 0.0, d);
+    gl_FragColor = vec4(vTint * (1.0 + core * 0.6), glow * vAlpha);
+  }
+`;
+
+function Starfield({ reducedMotion }: Pick<SceneProps, 'reducedMotion'>) {
+  const gl = useThree((state) => state.gl);
+  const material = useRef<THREE.ShaderMaterial>(null);
+  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uPixelRatio: { value: 1 } }), []);
+  const { positions, sizes, alphas, phases, tints } = useMemo(() => {
+    const fieldCount = 1500;
+    const bandCount = 1900;
+    const count = fieldCount + bandCount;
+    const positions = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    const alphas = new Float32Array(count);
+    const phases = new Float32Array(count);
+    const tints = new Float32Array(count * 3);
     let seed = 71;
     const random = () => {
       seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
       return (seed >>> 0) / 4294967296;
     };
-    for (let i = 0; i < 1800; i++) {
+    const setStar = (i: number, x: number, y: number, z: number, dim: boolean) => {
+      positions.set([x, y, z], i * 3);
+      sizes[i] = (dim ? 0.5 : 0.7) + Math.pow(random(), 3) * (dim ? 0.9 : 2.5);
+      alphas[i] = (dim ? 0.14 : 0.35) + random() * (dim ? 0.28 : 0.5);
+      phases[i] = random();
+      if (!dim && random() < 0.035) {
+        sizes[i] += 1.4;
+        alphas[i] = Math.min(1, alphas[i] + 0.35);
+      }
+      // Color temperature: cool blue-white through warm amber, biased toward white.
+      const temperature = clamp((random() - 0.35) * 1.15, 0, 1);
+      tints.set(
+        [0.72 + 0.28 * temperature, 0.8 + 0.02 * temperature, 1.0 - 0.4 * temperature],
+        i * 3,
+      );
+    };
+    for (let i = 0; i < fieldCount; i++) {
       const theta = random() * Math.PI * 2;
       const y = random() * 2 - 1;
       const radius = 180 + random() * 150;
       const horizontal = Math.sqrt(1 - y * y);
-      data.set(
-        [Math.cos(theta) * horizontal * radius, y * radius, Math.sin(theta) * horizontal * radius],
-        i * 3,
+      setStar(
+        i,
+        Math.cos(theta) * horizontal * radius,
+        y * radius,
+        Math.sin(theta) * horizontal * radius,
+        false,
       );
     }
-    return data;
+    // A tilted band of faint dense stars reads as a milky way.
+    const tilt = new THREE.Euler(0.62, 0.15, 0.42);
+    for (let i = fieldCount; i < count; i++) {
+      const angle = random() * Math.PI * 2;
+      const radius = 170 + random() * 150;
+      const spread = (random() + random() + random() - 1.5) / 1.5;
+      const local = new THREE.Vector3(
+        Math.cos(angle) * radius,
+        spread * radius * 0.16,
+        Math.sin(angle) * radius,
+      ).applyEuler(tilt);
+      setStar(i, local.x, local.y, local.z, true);
+    }
+    return { positions, sizes, alphas, phases, tints };
   }, []);
+  useFrame((_, delta) => {
+    if (!material.current) return;
+    material.current.uniforms.uPixelRatio.value = gl.getPixelRatio();
+    if (!reducedMotion) material.current.uniforms.uTime.value += Math.min(delta, 0.05);
+  });
   return (
     <points>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+        <bufferAttribute attach="attributes-aSize" args={[sizes, 1]} />
+        <bufferAttribute attach="attributes-aAlpha" args={[alphas, 1]} />
+        <bufferAttribute attach="attributes-aPhase" args={[phases, 1]} />
+        <bufferAttribute attach="attributes-aTint" args={[tints, 3]} />
       </bufferGeometry>
-      <pointsMaterial
-        color="#c7d3df"
-        size={0.24}
-        sizeAttenuation
+      <shaderMaterial
+        ref={material}
+        vertexShader={starfieldVertex}
+        fragmentShader={starfieldFragment}
+        uniforms={uniforms}
         transparent
-        opacity={0.75}
         depthWrite={false}
+        blending={THREE.AdditiveBlending}
       />
     </points>
   );
@@ -327,7 +407,7 @@ export default function Scene(props: SceneProps) {
     >
       <ambientLight intensity={0.19} color="#8fadd2" />
       <pointLight position={[0, 0, 0]} intensity={3.3} decay={0} color="#ffe7ca" />
-      <Starfield />
+      <Starfield reducedMotion={props.reducedMotion} />
       <Star reducedMotion={props.reducedMotion} />
       <Orbits />
       {planets.map((planet, index) => (

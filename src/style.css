@@ -74,12 +74,18 @@ button:hover {
     radial-gradient(1px 1px at 12% 19%, #c6d6e96b 50%, transparent),
     radial-gradient(1px 1px at 78% 33%, #c6d6e961 50%, transparent),
     radial-gradient(1px 1px at 38% 74%, #c6d6e947 50%, transparent),
-    radial-gradient(1px 1px at 91% 87%, #c6d6e972 50%, transparent);
+    radial-gradient(1px 1px at 91% 87%, #c6d6e972 50%, transparent),
+    radial-gradient(1.5px 1.5px at 55% 8%, #ffe9c4a8 50%, transparent),
+    radial-gradient(1.5px 1.5px at 23% 62%, #dcebffa3 50%, transparent),
+    radial-gradient(1px 1px at 67% 45%, #c6d6e93d 50%, transparent);
   background-size:
     317px 281px,
     439px 413px,
     521px 337px,
-    691px 587px;
+    691px 587px,
+    857px 677px,
+    943px 811px,
+    271px 243px;
   pointer-events: none;
 }
 .screen-shade {
